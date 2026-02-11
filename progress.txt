@@ -1,0 +1,1 @@
+- fix-001 (2026-02-11 10:03 EST): hardened dashboard rendering against XSS (escaped text/attrs, normalized status classes, removed inline run-id onclick injection, added regression test tests/dashboard-xss.test.js).

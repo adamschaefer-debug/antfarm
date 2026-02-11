@@ -207,8 +207,17 @@ async function fetchJSON(url) {
 async function loadWorkflows() {
   workflows = await fetchJSON('/api/workflows');
   const sel = document.getElementById('wf-select');
-  sel.innerHTML = '<option value="">— select workflow —</option>' +
-    workflows.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+  sel.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '— select workflow —';
+  sel.appendChild(placeholder);
+  workflows.forEach(w => {
+    const option = document.createElement('option');
+    option.value = String(w.id || '');
+    option.textContent = String(w.name || w.id || '');
+    sel.appendChild(option);
+  });
   if (workflows.length === 1) {
     sel.value = workflows[0].id;
     selectWorkflow(workflows[0].id);
@@ -258,53 +267,73 @@ function renderBoard(wf, runs) {
     const cardHTML = cards.length === 0
       ? '<div class="empty">No runs</div>'
       : cards.map(run => {
-          const isDone = run.status === 'done';
-          const isFailed = run.status === 'failed' || run.status === 'error';
+          const status = safeStatus(run.status);
+          const isDone = status === 'done';
+          const isFailed = status === 'failed' || status === 'error';
           const cls = isDone ? 'done' : isFailed ? 'failed' : '';
-          const badge = `badge-${run.status}`;
+          const badge = `badge-${status}`;
           const time = run.updated_at ? new Date(run.updated_at).toLocaleString() : '';
-          const title = run.task.length > 60 ? run.task.slice(0, 57) + '…' : run.task;
-          return `<div class="card ${cls}" onclick="openRun('${run.id}')">
-            <div class="card-title" title="${run.task.replace(/"/g, '&quot;')}">${title}</div>
+          const task = String(run.task || '');
+          const title = task.length > 60 ? task.slice(0, 57) + '…' : task;
+          return `<div class="card ${cls}" data-run-id="${escAttr(run.id)}">
+            <div class="card-title" title="${escAttr(task)}">${escText(title)}</div>
             <div class="card-meta">
-              <span class="badge ${badge}">${run.status}</span>
-              <span>${time}</span>
+              <span class="badge ${badge}">${escText(status)}</span>
+              <span>${escText(time)}</span>
             </div>
           </div>`;
         }).join('');
     return `<div class="column">
-      <div class="column-header">${step.id}<span class="count">${cards.length}</span></div>
+      <div class="column-header">${escText(step.id)}<span class="count">${cards.length}</span></div>
       <div class="cards">${cardHTML}</div>
     </div>`;
   }).join('');
 }
 
 const stepIcons = {done:'✓',running:'●',pending:'○',waiting:'◌',failed:'✗',error:'✗'};
-function esc(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+const allowedStatuses = new Set(['done', 'running', 'pending', 'waiting', 'failed', 'error', 'completed', 'blocked', 'skipped']);
+function safeStatus(s) {
+  const st = String(s || 'pending').toLowerCase();
+  return allowedStatuses.has(st) ? st : 'pending';
+}
+function escText(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+function escAttr(s) {
+  return escText(s)
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function esc(s) { return escText(s).replace(/"/g,'&quot;'); }
 
 async function openRun(id) {
   const run = await fetchJSON(`/api/runs/${id}`);
   const panel = document.getElementById('panel');
   const created = run.created_at ? new Date(run.created_at).toLocaleString() : '';
   const updated = run.updated_at ? new Date(run.updated_at).toLocaleString() : '';
+  const runStatus = safeStatus(run.status);
   const stepsHTML = (run.steps || []).map(s => {
-    const st = s.status || 'waiting';
+    const st = safeStatus(s.status || 'waiting');
     const icon = stepIcons[st] || '○';
     return `<div class="step-row">
       <div class="step-icon ${st}">${icon}</div>
-      <div class="step-name">${s.step_id}</div>
-      <div class="step-agent">${s.agent_id || ''}</div>
-      <div class="step-status"><span class="badge badge-${st}">${st}</span></div>
+      <div class="step-name">${escText(s.step_id)}</div>
+      <div class="step-agent">${escText(s.agent_id || '')}</div>
+      <div class="step-status"><span class="badge badge-${st}">${escText(st)}</span></div>
     </div>`;
   }).join('');
   panel.innerHTML = `
     <button class="panel-close" onclick="closePanel()">✕</button>
-    <h2>${run.workflow_id}</h2>
+    <h2>${escText(run.workflow_id)}</h2>
     <div class="panel-task">${esc(run.task)}</div>
     <div class="panel-meta">
-      <span><span class="badge badge-${run.status}">${run.status}</span></span>
-      <span>Created: ${created}</span>
-      <span>Updated: ${updated}</span>
+      <span><span class="badge badge-${runStatus}">${escText(runStatus)}</span></span>
+      <span>Created: ${escText(created)}</span>
+      <span>Updated: ${escText(updated)}</span>
     </div>
     <div class="steps-list">${stepsHTML}</div>
     <div id="stories-panel"></div>
@@ -382,18 +411,18 @@ async function loadStories(runId) {
       </div>
       <div style="display:flex;flex-direction:column;gap:6px">
         ${stories.map((s, i) => {
-          const st = s.status || 'pending';
+          const st = safeStatus(s.status || 'pending');
           const icon = stepIcons[st] || '○';
           let ac = [];
           try { ac = JSON.parse(s.acceptance_criteria || '[]'); } catch { ac = [s.acceptance_criteria]; }
-          const retryInfo = s.retry_count > 0 ? ` <span style="color:var(--accent-orange);font-size:10px">(retry ${s.retry_count})</span>` : '';
+          const retryInfo = s.retry_count > 0 ? ` <span style="color:var(--accent-orange);font-size:10px">(retry ${Number(s.retry_count)})</span>` : '';
           const hasDetails = s.description || ac.length > 0 || s.output;
           const toggleAttr = hasDetails ? `onclick="this.querySelector('.story-details').classList.toggle('story-open');this.querySelector('.story-chevron').classList.toggle('story-chevron-open')" style="cursor:pointer"` : '';
           return `<div class="step-row" style="flex-direction:column;align-items:stretch;gap:0;padding:0;overflow:hidden" ${toggleAttr}>
             <div style="display:flex;align-items:center;gap:8px;padding:10px 12px">
               <div class="step-icon ${st}">${icon}</div>
-              <div class="step-name" style="flex:1">${s.story_id}: ${s.title}${retryInfo}</div>
-              <div class="step-status"><span class="badge badge-${st}">${st}</span></div>
+              <div class="step-name" style="flex:1">${escText(s.story_id)}: ${escText(s.title)}${retryInfo}</div>
+              <div class="step-status"><span class="badge badge-${st}">${escText(st)}</span></div>
               ${hasDetails ? '<span class="story-chevron" style="color:var(--text-secondary);font-size:10px;transition:transform .15s;display:inline-block">▶</span>' : ''}
             </div>
             ${hasDetails ? `<div class="story-details" style="display:none;padding:0 12px 12px 44px;font-size:12px;color:var(--text-tertiary);line-height:1.6">
@@ -409,6 +438,12 @@ async function loadStories(runId) {
 }
 
 document.getElementById('wf-select').addEventListener('change', e => selectWorkflow(e.target.value));
+document.getElementById('board').addEventListener('click', e => {
+  const card = e.target.closest('.card[data-run-id]');
+  if (!card) return;
+  const runId = card.getAttribute('data-run-id');
+  if (runId) openRun(runId);
+});
 loadWorkflows();
 setInterval(() => { if (currentWf) loadRuns(); }, 30000);
 
