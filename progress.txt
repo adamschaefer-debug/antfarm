@@ -129,3 +129,25 @@ Started: 2026-02-11T03:07:00
   - Tests: `node --test tests/*.test.js` ✅ (33/33 passing)
 - **Learnings:** For command-line UX, parsing stdin only when `!process.stdin.isTTY` avoids hanging on interactive shells while still supporting pipes cleanly.
 ---
+
+## 2026-02-11 16:26 - US-004: Enable custom workflows in install/run/list lifecycle
+- Extended workflow resolution in `src/installer/workflow-fetch.ts` with:
+  - `listAvailableWorkflows()` for bundled + custom discovery
+  - `resolveWorkflowReference()` for explicit unknown-workflow errors with source-labeled availability
+- Updated `src/installer/install.ts` to support installing both bundled and custom workflows:
+  - custom install path now copies `custom-workflows/<id>.yml` into installed workflow dir as `workflow.yml`
+  - metadata source tag now reflects real source (`bundled:<id>` vs `custom:<id>`)
+  - invalid custom spec errors are wrapped as `Invalid custom workflow spec "<id>": ...`
+- Updated CLI lifecycle behavior in `src/cli/cli.ts`:
+  - `antfarm workflow list` now shows both sources with clear identity (`<id> (bundled|custom)`)
+  - `antfarm workflow run <custom-id>` auto-installs the custom spec before starting the run
+- Added integration coverage in `tests/workflow-lifecycle-cli.test.js` (force-added due `tests/*.js` ignore):
+  - list includes bundled+custom with source labels
+  - run starts from custom workflow id
+  - error paths distinguish unknown workflow vs invalid custom spec
+- Re-ran required checks:
+  - Typecheck: `npx tsc -p tsconfig.json --noEmit` ✅
+  - Build: `npm run build` ✅
+  - Tests: `node --test tests/*.test.js` ✅ (36/36 passing)
+- **Learnings:** A shared workflow resolver layer keeps CLI/install/run behavior consistent and makes source-aware error handling straightforward.
+---

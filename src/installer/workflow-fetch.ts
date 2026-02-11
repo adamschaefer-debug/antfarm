@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { listBundledWorkflowIds } from "./workflow-discovery.js";
+import { discoverWorkflows, listBundledWorkflowIds, type DiscoveredWorkflow } from "./workflow-discovery.js";
 import { resolveBundledWorkflowDir, resolveWorkflowDir, resolveWorkflowRoot } from "./paths.js";
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -30,22 +30,43 @@ export async function listBundledWorkflows(): Promise<string[]> {
 }
 
 /**
+ * List all available workflows (bundled + custom)
+ */
+export async function listAvailableWorkflows(): Promise<DiscoveredWorkflow[]> {
+  return discoverWorkflows();
+}
+
+/**
+ * Resolve a workflow id from bundled/custom sources.
+ */
+export async function resolveWorkflowReference(workflowId: string): Promise<DiscoveredWorkflow> {
+  const workflows = await discoverWorkflows();
+  const match = workflows.find((w) => w.id === workflowId);
+  if (match) {
+    return match;
+  }
+  const available = workflows.map((w) => `${w.id} (${w.source})`);
+  const availableStr = available.length > 0 ? `Available: ${available.join(", ")}` : "No workflows available.";
+  throw new Error(`Unknown workflow "${workflowId}". ${availableStr}`);
+}
+
+/**
  * Fetch a bundled workflow by name.
  * Copies from the antfarm package's workflows/ directory to the user's installed workflows.
  */
 export async function fetchWorkflow(workflowId: string): Promise<{ workflowDir: string; bundledSourceDir: string }> {
   const bundledDir = resolveBundledWorkflowDir(workflowId);
   const workflowYml = path.join(bundledDir, "workflow.yml");
-  
+
   if (!(await pathExists(workflowYml))) {
     const available = await listBundledWorkflows();
     const availableStr = available.length > 0 ? `Available: ${available.join(", ")}` : "No workflows bundled.";
     throw new Error(`Workflow "${workflowId}" not found. ${availableStr}`);
   }
-  
+
   await ensureDir(resolveWorkflowRoot());
   const destination = resolveWorkflowDir(workflowId);
   await copyDirectory(bundledDir, destination);
-  
+
   return { workflowDir: destination, bundledSourceDir: bundledDir };
 }

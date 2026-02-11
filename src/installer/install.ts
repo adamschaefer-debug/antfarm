@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fetchWorkflow } from "./workflow-fetch.js";
+import { fetchWorkflow, resolveWorkflowReference } from "./workflow-fetch.js";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { provisionAgents } from "./agent-provision.js";
 import { readOpenClawConfig, writeOpenClawConfig } from "./openclaw-config.js";
@@ -8,6 +8,7 @@ import { updateMainAgentGuidance } from "./main-agent-guidance.js";
 import { addSubagentAllowlist } from "./subagent-allowlist.js";
 import { installAntfarmSkill } from "./skill-install.js";
 import type { AgentRole, WorkflowInstallResult, WorkflowSpec } from "./types.js";
+import { resolveCustomWorkflowPath, resolveWorkflowDir, resolveWorkflowRoot } from "./paths.js";
 
 function ensureAgentList(config: { agents?: { list?: Array<Record<string, unknown>> } }) {
   if (!config.agents) config.agents = {};
@@ -144,9 +145,44 @@ async function writeWorkflowMetadata(params: { workflowDir: string; workflowId: 
   await fs.writeFile(path.join(params.workflowDir, "metadata.json"), `${JSON.stringify(content, null, 2)}\n`, "utf-8");
 }
 
+async function installCustomWorkflow(workflowId: string): Promise<{ workflowDir: string; source: string }> {
+  const sourcePath = resolveCustomWorkflowPath(workflowId);
+  const workflowDir = resolveWorkflowDir(workflowId);
+  await fs.mkdir(resolveWorkflowRoot(), { recursive: true });
+  await fs.mkdir(workflowDir, { recursive: true });
+  await fs.copyFile(sourcePath, path.join(workflowDir, "workflow.yml"));
+  return { workflowDir, source: `custom:${workflowId}` };
+}
+
 export async function installWorkflow(params: { workflowId: string }): Promise<WorkflowInstallResult> {
-  const { workflowDir, bundledSourceDir } = await fetchWorkflow(params.workflowId);
-  const workflow = await loadWorkflowSpec(workflowDir);
+  const resolved = await resolveWorkflowReference(params.workflowId);
+
+  let workflowDir: string;
+  let bundledSourceDir: string | undefined;
+  let sourceTag: string;
+
+  if (resolved.source === "bundled") {
+    const fetched = await fetchWorkflow(resolved.id);
+    workflowDir = fetched.workflowDir;
+    bundledSourceDir = fetched.bundledSourceDir;
+    sourceTag = `bundled:${resolved.id}`;
+  } else {
+    const installed = await installCustomWorkflow(resolved.id);
+    workflowDir = installed.workflowDir;
+    sourceTag = installed.source;
+  }
+
+  let workflow: WorkflowSpec;
+  try {
+    workflow = await loadWorkflowSpec(workflowDir);
+  } catch (error) {
+    if (resolved.source === "custom") {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Invalid custom workflow spec "${resolved.id}": ${message}`);
+    }
+    throw error;
+  }
+
   const provisioned = await provisionAgents({ workflow, workflowDir, bundledSourceDir });
 
   // Build a role lookup: workflow agent id → role (explicit or inferred)
@@ -167,7 +203,7 @@ export async function installWorkflow(params: { workflowId: string }): Promise<W
   await writeOpenClawConfig(configPath, config);
   await updateMainAgentGuidance();
   await installAntfarmSkill();
-  await writeWorkflowMetadata({ workflowDir, workflowId: workflow.id, source: `bundled:${params.workflowId}` });
+  await writeWorkflowMetadata({ workflowDir, workflowId: workflow.id, source: sourceTag });
 
   return { workflowId: workflow.id, workflowDir };
 }

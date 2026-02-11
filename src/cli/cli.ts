@@ -3,7 +3,7 @@ import { installWorkflow } from "../installer/install.js";
 import { uninstallAllWorkflows, uninstallWorkflow, checkActiveRuns } from "../installer/uninstall.js";
 import { getWorkflowStatus, listRuns } from "../installer/status.js";
 import { runWorkflow } from "../installer/run.js";
-import { listBundledWorkflows } from "../installer/workflow-fetch.js";
+import { listAvailableWorkflows, listBundledWorkflows, resolveWorkflowReference } from "../installer/workflow-fetch.js";
 import { readRecentLogs } from "../lib/logger.js";
 import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
 import { claimStep, completeStep, failStep, getStories } from "../installer/step-ops.js";
@@ -508,10 +508,10 @@ async function main() {
   }
 
   if (action === "list") {
-    const workflows = await listBundledWorkflows();
+    const workflows = await listAvailableWorkflows();
     if (workflows.length === 0) { process.stdout.write("No workflows available.\n"); } else {
       process.stdout.write("Available workflows:\n");
-      for (const w of workflows) process.stdout.write(`  ${w}\n`);
+      for (const w of workflows) process.stdout.write(`  ${w.id} (${w.source})\n`);
     }
     return;
   }
@@ -648,6 +648,13 @@ async function main() {
   if (action === "run") {
     const taskTitle = args.slice(3).join(" ").trim();
     if (!taskTitle) { process.stderr.write("Missing task title.\n"); printUsage(); process.exit(1); }
+
+    const resolved = await resolveWorkflowReference(target);
+    // Custom workflows are source files until installed; auto-install so run can execute immediately.
+    if (resolved.source === "custom") {
+      await installWorkflow({ workflowId: target });
+    }
+
     const run = await runWorkflow({ workflowId: target, taskTitle });
     process.stdout.write(
       [`Run: ${run.id}`, `Workflow: ${run.workflowId}`, `Task: ${run.task}`, `Status: ${run.status}`].join("\n") + "\n",
