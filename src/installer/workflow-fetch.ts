@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { resolveBundledWorkflowDir, resolveBundledWorkflowsDir, resolveWorkflowDir, resolveWorkflowRoot } from "./paths.js";
+import { listBundledWorkflowIds } from "./workflow-discovery.js";
+import { resolveBundledWorkflowDir, resolveWorkflowDir, resolveWorkflowRoot } from "./paths.js";
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -25,22 +26,7 @@ async function copyDirectory(sourceDir: string, destinationDir: string) {
  * List all available bundled workflows
  */
 export async function listBundledWorkflows(): Promise<string[]> {
-  const bundledDir = resolveBundledWorkflowsDir();
-  try {
-    const entries = await fs.readdir(bundledDir, { withFileTypes: true });
-    const workflows: string[] = [];
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const workflowYml = path.join(bundledDir, entry.name, "workflow.yml");
-        if (await pathExists(workflowYml)) {
-          workflows.push(entry.name);
-        }
-      }
-    }
-    return workflows;
-  } catch {
-    return [];
-  }
+  return listBundledWorkflowIds();
 }
 
 /**

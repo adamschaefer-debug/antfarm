@@ -76,3 +76,18 @@ Started: 2026-02-11T03:07:00
 - Files changed: src/workflow-builder.ts, src/installer/paths.ts, src/installer/workflow-spec.ts, tests/workflow-builder.test.ts
 - **Learnings:** Shared validation logic is safest as an exported validator from workflow-spec to avoid drift between bundled and custom workflow rules
 ---
+
+## 2026-02-11 15:21 - US-001: Custom workflow path + discovery primitives
+- Added `resolveCustomWorkflowPath(workflowId)` in `src/installer/paths.ts` and wired `workflow-builder` path generation to use canonical path helpers.
+- Added `src/installer/workflow-discovery.ts` with:
+  - `listBundledWorkflowIds()` for bundled discovery primitive
+  - `discoverWorkflows()` returning a normalized shape `{ id, source, specPath }` for bundled + custom workflows
+  - deterministic ordering by `id` then source (`bundled` before `custom` when ids match)
+- Refactored `src/installer/workflow-fetch.ts` so `listBundledWorkflows()` delegates to discovery primitive, preserving current bundled behavior for existing CLI commands.
+- Added `tests/workflow-discovery.test.ts` covering:
+  - custom workflow path helper behavior under `OPENCLAW_STATE_DIR`
+  - bundled list compatibility (`listBundledWorkflows()` vs `listBundledWorkflowIds()`)
+  - combined bundled+custom discovery normalized output and deterministic ordering
+- Files changed: src/installer/paths.ts, src/workflow-builder.ts, src/installer/workflow-discovery.ts, src/installer/workflow-fetch.ts, tests/workflow-discovery.test.ts
+- **Learnings:** Use discovery primitives as the single source of truth, then keep legacy APIs as thin adapters to preserve backwards compatibility while enabling new features.
+---

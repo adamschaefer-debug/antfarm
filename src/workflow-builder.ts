@@ -1,8 +1,7 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 import YAML from "yaml";
 import type { WorkflowSpec } from "./installer/types.js";
-import { resolveCustomWorkflowsDir } from "./installer/paths.js";
+import { resolveCustomWorkflowPath, resolveCustomWorkflowsDir } from "./installer/paths.js";
 import { validateWorkflowSpecDocument } from "./installer/workflow-spec.js";
 
 function normalizeWorkflowId(id: string): string {
@@ -17,7 +16,7 @@ function normalizeWorkflowId(id: string): string {
 }
 
 function workflowPath(id: string): string {
-  return path.join(resolveCustomWorkflowsDir(), `${normalizeWorkflowId(id)}.yml`);
+  return resolveCustomWorkflowPath(normalizeWorkflowId(id));
 }
 
 export async function listCustomWorkflows(): Promise<string[]> {

@@ -42,6 +42,10 @@ export function resolveCustomWorkflowsDir(): string {
   return path.join(resolveAntfarmRoot(), "custom-workflows");
 }
 
+export function resolveCustomWorkflowPath(workflowId: string): string {
+  return path.join(resolveCustomWorkflowsDir(), `${workflowId}.yml`);
+}
+
 export function resolveWorkflowDir(workflowId: string): string {
   return path.join(resolveWorkflowRoot(), workflowId);
 }
