@@ -5,11 +5,11 @@ import { resolveCustomWorkflowPath, resolveCustomWorkflowsDir } from "./installe
 import { validateWorkflowSpecDocument } from "./installer/workflow-spec.js";
 
 function normalizeWorkflowId(id: string): string {
-  const trimmed = id.trim();
+  const trimmed = id.trim().toLowerCase();
   if (!trimmed) {
     throw new Error("workflow id is required");
   }
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(trimmed)) {
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(trimmed)) {
     throw new Error(`invalid workflow id: ${id}`);
   }
   return trimmed;
@@ -23,10 +23,19 @@ export async function listCustomWorkflows(): Promise<string[]> {
   const dir = resolveCustomWorkflowsDir();
   try {
     const entries = await fs.readdir(dir, { withFileTypes: true });
-    return entries
+    const ids = entries
       .filter((entry) => entry.isFile() && (entry.name.endsWith(".yml") || entry.name.endsWith(".yaml")))
       .map((entry) => entry.name.replace(/\.ya?ml$/i, ""))
-      .sort();
+      .map((name) => {
+        try {
+          return normalizeWorkflowId(name);
+        } catch {
+          return null;
+        }
+      })
+      .filter((name): name is string => Boolean(name));
+
+    return Array.from(new Set(ids)).sort();
   } catch (error: any) {
     if (error?.code === "ENOENT") {
       return [];
@@ -67,7 +76,7 @@ export async function saveCustomWorkflow(spec: WorkflowSpec): Promise<{ valid: b
   const dir = resolveCustomWorkflowsDir();
   await fs.mkdir(dir, { recursive: true });
   const outputPath = workflowPath(id);
-  const yaml = YAML.stringify(spec);
+  const yaml = YAML.stringify({ ...spec, id });
   await fs.writeFile(outputPath, yaml, "utf-8");
   return validation;
 }

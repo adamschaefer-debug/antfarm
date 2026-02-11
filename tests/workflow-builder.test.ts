@@ -68,6 +68,17 @@ describe("workflow-builder custom workflow CRUD", () => {
     assert.deepEqual(items, ["my-flow"]);
   });
 
+  it("normalizes workflow ids to lowercase on save and lookup", async () => {
+    const result = await saveCustomWorkflow(makeValidSpec("My-Flow"));
+    assert.equal(result.valid, true);
+
+    const items = await listCustomWorkflows();
+    assert.deepEqual(items, ["my-flow"]);
+
+    const workflow = await getCustomWorkflow("MY-FLOW");
+    assert.equal(workflow?.id, "my-flow");
+  });
+
   it("gets a saved custom workflow", async () => {
     await saveCustomWorkflow(makeValidSpec("reader-flow"));
     const workflow = await getCustomWorkflow("reader-flow");
@@ -146,5 +157,13 @@ describe("workflow-builder validation", () => {
     const result = await saveCustomWorkflow(spec);
     assert.equal(result.valid, false);
     assert.deepEqual(await listCustomWorkflows(), []);
+  });
+
+  it("rejects invalid workflow ids before file writes", async () => {
+    const dir = resolveCustomWorkflowsDir();
+    const spec = makeValidSpec("bad id");
+
+    await assert.rejects(() => saveCustomWorkflow(spec), /invalid workflow id/i);
+    await assert.rejects(() => fs.access(dir));
   });
 });

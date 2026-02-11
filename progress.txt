@@ -101,3 +101,17 @@ Started: 2026-02-11T03:07:00
 - No additional source changes were required for US-001 behavior.
 - **Learnings:** When verifier retries are triggered by workspace-local artifacts, first confirm story commit integrity and then rerun the exact required command set.
 ---
+
+## 2026-02-11 15:53 - US-002: Workflow builder domain module CRUD + validation
+- Hardened `src/workflow-builder.ts` ID normalization to canonical lowercase format and strict validation (`^[a-z0-9][a-z0-9_-]*$`).
+- Ensured persisted workflow specs write normalized IDs back into YAML (`{ ...spec, id }`) so file content and file path stay consistent.
+- Improved custom workflow listing to normalize IDs from filenames, skip invalid filenames safely, and deduplicate results.
+- Added/updated tests in `tests/workflow-builder.test.ts` and `tests/workflow-builder.test.js` for:
+  - lowercase normalization behavior across save/list/get
+  - invalid ID rejection before any file writes
+- Re-ran required checks:
+  - Typecheck: `npx tsc -p tsconfig.json --noEmit` ✅
+  - Build: `npm run build` ✅
+  - Tests: `node --test tests/*.test.js` ✅ (28/28 passing)
+- **Learnings:** Canonicalizing user-provided IDs at module boundaries keeps filesystem paths deterministic and avoids duplicate logical workflows differing only by case.
+---
