@@ -21,6 +21,7 @@ export function getDb(): DatabaseSync {
   _db.exec("PRAGMA journal_mode=WAL");
   _db.exec("PRAGMA foreign_keys=ON");
   migrate(_db);
+  monitorRunCount(_db);
   return _db;
 }
 
@@ -97,4 +98,80 @@ function migrate(db: DatabaseSync): void {
 
 export function getDbPath(): string {
   return DB_PATH;
+}
+
+function getBackupsDir(): string {
+  return path.join(DB_DIR, "backups");
+}
+
+function getRunCountStatePath(): string {
+  return path.join(DB_DIR, "run-count-state.json");
+}
+
+function appendAlert(line: string): void {
+  try {
+    fs.mkdirSync(DB_DIR, { recursive: true });
+    fs.appendFileSync(path.join(DB_DIR, "alerts.log"), `${line}\n`, "utf-8");
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * Create a timestamped snapshot of the Antfarm DB before risky operations.
+ */
+export function backupDatabaseSnapshot(reason: string): string | null {
+  try {
+    if (!fs.existsSync(DB_PATH)) return null;
+    fs.mkdirSync(getBackupsDir(), { recursive: true });
+
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const safeReason = reason.replace(/[^a-z0-9-_]+/gi, "-").toLowerCase();
+    const file = path.join(getBackupsDir(), `${ts}__${safeReason}.db`);
+
+    fs.copyFileSync(DB_PATH, file);
+
+    const wal = `${DB_PATH}-wal`;
+    if (fs.existsSync(wal) && fs.statSync(wal).size > 0) {
+      fs.copyFileSync(wal, `${file}-wal`);
+    }
+
+    const shm = `${DB_PATH}-shm`;
+    if (fs.existsSync(shm) && fs.statSync(shm).size > 0) {
+      fs.copyFileSync(shm, `${file}-shm`);
+    }
+
+    return file;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Detect abrupt run-count drops and persist an alert for visibility.
+ */
+function monitorRunCount(db: DatabaseSync): void {
+  try {
+    const row = db.prepare("SELECT COUNT(*) as cnt FROM runs").get() as { cnt: number };
+    const current = Number(row?.cnt ?? 0);
+    const statePath = getRunCountStatePath();
+
+    let previous = current;
+    try {
+      const prev = JSON.parse(fs.readFileSync(statePath, "utf-8")) as { count?: number };
+      previous = Number(prev?.count ?? current);
+    } catch {
+      previous = current;
+    }
+
+    if (current < previous) {
+      appendAlert(`[${new Date().toISOString()}] RUN_COUNT_DROP previous=${previous} current=${current} db=${DB_PATH}`);
+      // Surface in stdout/stderr so operators notice immediately.
+      console.warn(`⚠️  Antfarm run count dropped from ${previous} to ${current}. Snapshot/restore may be needed.`);
+    }
+
+    fs.writeFileSync(statePath, JSON.stringify({ count: current, updatedAt: new Date().toISOString() }, null, 2) + "\n", "utf-8");
+  } catch {
+    // best-effort
+  }
 }

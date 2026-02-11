@@ -9,6 +9,7 @@ import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/d
 import { claimStep, completeStep, failStep, getStories } from "../installer/step-ops.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { createItem, getItems, updateItem, deleteItem, reorderItem, type BacklogItem } from "../backlog.js";
+import { backupDatabaseSnapshot } from "../db.js";
 import {
   deleteCustomWorkflow,
   getCustomWorkflow,
@@ -91,6 +92,13 @@ function getFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
   if (idx !== -1 && args[idx + 1]) return args[idx + 1];
   return undefined;
+}
+
+function backupBeforeRiskyOp(reason: string): void {
+  const snapshot = backupDatabaseSnapshot(reason);
+  if (snapshot) {
+    console.log(`DB snapshot saved: ${snapshot}`);
+  }
 }
 
 async function readWorkflowSpecInput(args: string[]): Promise<WorkflowSpec> {
@@ -303,6 +311,7 @@ async function main() {
   }
 
   if (group === "update") {
+    backupBeforeRiskyOp("before-update");
     const repoRoot = join(__dirname, "..", "..");
     console.log("Pulling latest...");
     try {
@@ -335,6 +344,7 @@ async function main() {
   }
 
   if (group === "uninstall" && (!args[1] || args[1] === "--force")) {
+    backupBeforeRiskyOp("before-uninstall-all");
     const force = args.includes("--force");
     const activeRuns = checkActiveRuns();
     if (activeRuns.length > 0 && !force) {
@@ -358,6 +368,7 @@ async function main() {
   }
 
   if (group === "install" && !args[1]) {
+    backupBeforeRiskyOp("before-install-all");
     const workflows = await listBundledWorkflows();
     if (workflows.length === 0) { console.log("No bundled workflows found."); return; }
 
@@ -529,6 +540,7 @@ async function main() {
   if (!target) { printUsage(); process.exit(1); }
 
   if (action === "install") {
+    backupBeforeRiskyOp(`before-workflow-install-${target}`);
     const result = await installWorkflow({ workflowId: target });
     process.stdout.write(`Installed workflow: ${result.workflowId}\nAgent crons will start when a run begins.\n`);
     process.stdout.write(`\nStart with: antfarm workflow run ${result.workflowId} "your task"\n`);
@@ -536,6 +548,7 @@ async function main() {
   }
 
   if (action === "uninstall") {
+    backupBeforeRiskyOp(`before-workflow-uninstall-${target}`);
     const force = args.includes("--force");
     const isAll = target === "--all" || target === "all";
     const activeRuns = checkActiveRuns(isAll ? undefined : target);
