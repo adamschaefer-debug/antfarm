@@ -151,3 +151,23 @@ Started: 2026-02-11T03:07:00
   - Tests: `node --test tests/*.test.js` ✅ (36/36 passing)
 - **Learnings:** A shared workflow resolver layer keeps CLI/install/run behavior consistent and makes source-aware error handling straightforward.
 ---
+
+## 2026-02-11 16:36 - US-005: Dashboard API endpoints for workflow builder
+- Added custom workflow REST endpoints in `src/server/dashboard.ts`:
+  - `GET /api/custom-workflows` (list)
+  - `GET /api/custom-workflows/:id` (get)
+  - `POST /api/custom-workflows` (create, with overwrite guard)
+  - `PATCH /api/custom-workflows/:id` (update)
+  - `DELETE /api/custom-workflows/:id` (delete)
+  - `POST /api/custom-workflows/validate` (validate)
+- Added structured machine-readable error payloads for dashboard workflow builder API (`{ error: { code, message, details } }`).
+- Invalid JSON now returns `400` with `error.code = "invalid_json"`; invalid workflow specs return `400` with `error.code = "invalid_workflow_spec"` and validation details.
+- Create endpoint now prevents accidental overwrite unless `overwrite: true` is provided.
+- Successful create/update responses now include both workflow id and persisted metadata (`path`, `updatedAt`, `sizeBytes`) plus the saved workflow payload.
+- Added `tests/workflow-builder-api.test.js` with 9 API tests covering list/get/create/update/delete/validate, overwrite protection, invalid JSON, and invalid spec handling.
+- Re-ran required checks:
+  - Build: `npm run build` ✅
+  - Tests: `node --test tests/*.test.js` ✅ (45/45 passing)
+- Files changed: `src/server/dashboard.ts`, `tests/workflow-builder-api.test.js`
+- **Learnings:** Keeping API errors in a consistent `{ code, message, details }` shape makes frontend handling predictable and allows validation details to flow without brittle string matching.
+---

@@ -1,14 +1,23 @@
 import http from "node:http";
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDb } from "../db.js";
-import { resolveBundledWorkflowsDir } from "../installer/paths.js";
+import { resolveBundledWorkflowsDir, resolveCustomWorkflowPath } from "../installer/paths.js";
 import { runWorkflow } from "../installer/run.js";
 import { getItems, createItem, updateItem, deleteItem, reorderItem } from "../backlog.js";
+import {
+  deleteCustomWorkflow,
+  getCustomWorkflow,
+  listCustomWorkflows,
+  saveCustomWorkflow,
+  validateWorkflowSpec,
+} from "../workflow-builder.js";
 import YAML from "yaml";
 
 import type { RunInfo, StepInfo } from "../installer/status.js";
+import type { WorkflowSpec } from "../installer/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -16,6 +25,14 @@ interface WorkflowDef {
   id: string;
   name: string;
   steps: Array<{ id: string; agent: string }>;
+}
+
+interface ApiErrorBody {
+  error: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
 }
 
 function loadWorkflows(): WorkflowDef[] {
@@ -33,15 +50,17 @@ function loadWorkflows(): WorkflowDef[] {
         steps: (parsed.steps ?? []).map((s: any) => ({ id: s.id, agent: s.agent })),
       });
     }
-  } catch { /* empty */ }
+  } catch {
+    /* empty */
+  }
   return results;
 }
 
 function getRuns(workflowId?: string): Array<RunInfo & { steps: StepInfo[] }> {
   const db = getDb();
   const runs = workflowId
-    ? db.prepare("SELECT * FROM runs WHERE workflow_id = ? ORDER BY created_at DESC").all(workflowId) as RunInfo[]
-    : db.prepare("SELECT * FROM runs ORDER BY created_at DESC").all() as RunInfo[];
+    ? (db.prepare("SELECT * FROM runs WHERE workflow_id = ? ORDER BY created_at DESC").all(workflowId) as RunInfo[])
+    : (db.prepare("SELECT * FROM runs ORDER BY created_at DESC").all() as RunInfo[]);
   return runs.map((r) => {
     const steps = db.prepare("SELECT * FROM steps WHERE run_id = ? ORDER BY step_index ASC").all(r.id) as StepInfo[];
     return { ...r, steps };
@@ -65,9 +84,43 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
+async function readJsonBody(req: http.IncomingMessage): Promise<any> {
+  const raw = await readBody(req);
+  if (!raw.trim()) {
+    return {};
+  }
+  return JSON.parse(raw);
+}
+
 function json(res: http.ServerResponse, data: unknown, status = 200) {
   res.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
   res.end(JSON.stringify(data));
+}
+
+function jsonError(res: http.ServerResponse, status: number, code: string, message: string, details?: unknown) {
+  const payload: ApiErrorBody = { error: { code, message } };
+  if (details !== undefined) {
+    payload.error.details = details;
+  }
+  return json(res, payload, status);
+}
+
+function extractWorkflowSpec(body: any): WorkflowSpec {
+  if (body && typeof body === "object" && body.spec && typeof body.spec === "object") {
+    return body.spec as WorkflowSpec;
+  }
+  return body as WorkflowSpec;
+}
+
+async function getWorkflowMetadata(id: string) {
+  const workflowPath = resolveCustomWorkflowPath(id);
+  const stat = await fsPromises.stat(workflowPath);
+  return {
+    id,
+    path: workflowPath,
+    updatedAt: stat.mtime.toISOString(),
+    sizeBytes: stat.size,
+  };
 }
 
 function serveHTML(res: http.ServerResponse) {
@@ -95,8 +148,108 @@ export function startDashboard(port = 3333): http.Server {
       return res.end();
     }
 
-    // --- Backlog API ---
+    // --- API ---
     try {
+      // --- Custom Workflows API ---
+      if (p === "/api/custom-workflows" && method === "GET") {
+        const workflowIds = await listCustomWorkflows();
+        const workflows = await Promise.all(
+          workflowIds.map(async (id) => {
+            const workflow = await getCustomWorkflow(id);
+            const metadata = await getWorkflowMetadata(id);
+            return {
+              id,
+              name: workflow?.name ?? id,
+              metadata,
+            };
+          })
+        );
+        return json(res, workflows);
+      }
+
+      if (p === "/api/custom-workflows/validate" && method === "POST") {
+        const body = await readJsonBody(req);
+        const spec = extractWorkflowSpec(body);
+        const validation = validateWorkflowSpec(spec);
+        if (!validation.valid) {
+          return jsonError(res, 400, "invalid_workflow_spec", "Workflow spec validation failed", {
+            errors: validation.errors,
+          });
+        }
+        return json(res, { valid: true, errors: [] });
+      }
+
+      if (p === "/api/custom-workflows" && method === "POST") {
+        const body = await readJsonBody(req);
+        const overwrite = body.overwrite === true;
+        const spec = extractWorkflowSpec(body);
+
+        const validation = validateWorkflowSpec(spec);
+        if (!validation.valid) {
+          return jsonError(res, 400, "invalid_workflow_spec", "Workflow spec validation failed", {
+            errors: validation.errors,
+          });
+        }
+
+        const existing = await getCustomWorkflow(spec.id);
+        if (existing && !overwrite) {
+          return jsonError(
+            res,
+            409,
+            "workflow_exists",
+            `Workflow \"${spec.id}\" already exists. Set overwrite=true to replace it.`
+          );
+        }
+
+        await saveCustomWorkflow(spec);
+        const persisted = await getCustomWorkflow(spec.id);
+        const metadata = await getWorkflowMetadata(spec.id);
+        return json(res, { id: spec.id, metadata, workflow: persisted }, existing ? 200 : 201);
+      }
+
+      const customWorkflowMatch = p.match(/^\/api\/custom-workflows\/([^/]+)$/);
+      if (customWorkflowMatch && method === "GET") {
+        const id = customWorkflowMatch[1];
+        const workflow = await getCustomWorkflow(id);
+        if (!workflow) {
+          return jsonError(res, 404, "workflow_not_found", `Workflow \"${id}\" not found`);
+        }
+        const metadata = await getWorkflowMetadata(id);
+        return json(res, { id, metadata, workflow });
+      }
+
+      if (customWorkflowMatch && method === "PATCH") {
+        const id = customWorkflowMatch[1];
+        const existing = await getCustomWorkflow(id);
+        if (!existing) {
+          return jsonError(res, 404, "workflow_not_found", `Workflow \"${id}\" not found`);
+        }
+
+        const body = await readJsonBody(req);
+        const spec = extractWorkflowSpec(body);
+        if (spec?.id && String(spec.id).trim().toLowerCase() !== id.toLowerCase()) {
+          return jsonError(res, 400, "workflow_id_mismatch", "Workflow id in payload must match route id", {
+            routeId: id,
+            payloadId: spec.id,
+          });
+        }
+
+        await saveCustomWorkflow({ ...spec, id });
+        const persisted = await getCustomWorkflow(id);
+        const metadata = await getWorkflowMetadata(id);
+        return json(res, { id, metadata, workflow: persisted }, 200);
+      }
+
+      if (customWorkflowMatch && method === "DELETE") {
+        const id = customWorkflowMatch[1];
+        const deleted = await deleteCustomWorkflow(id);
+        if (!deleted) {
+          return jsonError(res, 404, "workflow_not_found", `Workflow \"${id}\" not found`);
+        }
+        return json(res, { id, deleted: true }, 200);
+      }
+
+      // --- Backlog API ---
       if (p === "/api/backlog" && method === "GET") {
         return json(res, getItems());
       }
@@ -143,14 +296,14 @@ export function startDashboard(port = 3333): http.Server {
       const dispatchMatch = p.match(/^\/api\/backlog\/([^/]+)\/dispatch$/);
       if (dispatchMatch && method === "POST") {
         const items = getItems();
-        const item = items.find(i => i.id === dispatchMatch[1]);
+        const item = items.find((i) => i.id === dispatchMatch[1]);
         if (!item) return json(res, { error: "not found" }, 404);
         if (!item.target_workflow) {
           return json(res, { error: "target_workflow is not set" }, 400);
         }
         // Validate workflow exists
         const workflows = loadWorkflows();
-        if (!workflows.find(w => w.id === item.target_workflow)) {
+        if (!workflows.find((w) => w.id === item.target_workflow)) {
           return json(res, { error: "invalid workflow: " + item.target_workflow }, 400);
         }
         const run = await runWorkflow({ workflowId: item.target_workflow, taskTitle: item.title });
@@ -159,10 +312,10 @@ export function startDashboard(port = 3333): http.Server {
       }
     } catch (err: unknown) {
       if (err instanceof SyntaxError) {
-        return json(res, { error: "invalid JSON" }, 400);
+        return jsonError(res, 400, "invalid_json", "Request body must be valid JSON");
       }
       const msg = err instanceof Error ? err.message : String(err);
-      return json(res, { error: msg }, 500);
+      return jsonError(res, 500, "internal_error", msg);
     }
 
     if (p === "/api/workflows") {
@@ -172,9 +325,7 @@ export function startDashboard(port = 3333): http.Server {
     const storiesMatch = p.match(/^\/api\/runs\/([^/]+)\/stories$/);
     if (storiesMatch) {
       const db = getDb();
-      const stories = db.prepare(
-        "SELECT * FROM stories WHERE run_id = ? ORDER BY story_index ASC"
-      ).all(storiesMatch[1]);
+      const stories = db.prepare("SELECT * FROM stories WHERE run_id = ? ORDER BY story_index ASC").all(storiesMatch[1]);
       return json(res, stories);
     }
 
@@ -196,7 +347,11 @@ export function startDashboard(port = 3333): http.Server {
       const srcFontPath = path.resolve(__dirname, "..", "..", "src", "..", "assets", "fonts", fontName);
       const resolvedFont = fs.existsSync(fontPath) ? fontPath : srcFontPath;
       if (fs.existsSync(resolvedFont)) {
-        res.writeHead(200, { "Content-Type": "font/woff2", "Cache-Control": "public, max-age=31536000", "Access-Control-Allow-Origin": "*" });
+        res.writeHead(200, {
+          "Content-Type": "font/woff2",
+          "Cache-Control": "public, max-age=31536000",
+          "Access-Control-Allow-Origin": "*",
+        });
         return res.end(fs.readFileSync(resolvedFont));
       }
     }
