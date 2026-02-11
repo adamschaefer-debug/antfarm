@@ -115,3 +115,17 @@ Started: 2026-02-11T03:07:00
   - Tests: `node --test tests/*.test.js` ✅ (28/28 passing)
 - **Learnings:** Canonicalizing user-provided IDs at module boundaries keeps filesystem paths deterministic and avoids duplicate logical workflows differing only by case.
 ---
+
+## 2026-02-11 16:10 - US-003: CLI commands for custom workflow management
+- Added `workflow custom` command group in `src/cli/cli.ts` with: `list`, `show`, `create`, `update`, `delete`.
+- Added input parsing helper for custom workflow create/update that accepts either `--file/-f <path>` or piped stdin content.
+- Input parsing supports JSON first, then YAML fallback, with clear actionable parse errors.
+- Added validation-first behavior for create/update using `validateWorkflowSpec`, so invalid specs are rejected before writes.
+- Added targeted help/usage lines documenting all custom workflow CLI actions.
+- Added CLI integration tests in `tests/workflow-custom-cli.test.js` covering usage docs, create (file+stdin), invalid reject/no-write, list/show, update, and delete.
+- Re-ran required checks:
+  - Typecheck: `npx tsc -p tsconfig.json --noEmit` ✅
+  - Build: `npm run build` ✅
+  - Tests: `node --test tests/*.test.js` ✅ (33/33 passing)
+- **Learnings:** For command-line UX, parsing stdin only when `!process.stdin.isTTY` avoids hanging on interactive shells while still supporting pipes cleanly.
+---

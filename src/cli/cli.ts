@@ -9,8 +9,17 @@ import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/d
 import { claimStep, completeStep, failStep, getStories } from "../installer/step-ops.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { createItem, getItems, updateItem, deleteItem, reorderItem, type BacklogItem } from "../backlog.js";
+import {
+  deleteCustomWorkflow,
+  getCustomWorkflow,
+  listCustomWorkflows,
+  saveCustomWorkflow,
+  validateWorkflowSpec,
+} from "../workflow-builder.js";
+import type { WorkflowSpec } from "../installer/types.js";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -41,6 +50,11 @@ function printUsage() {
       "antfarm workflow status <query>      Check run status (task substring, run ID prefix)",
       "antfarm workflow runs                List all workflow runs",
       "antfarm workflow resume <run-id>     Resume a failed run from where it left off",
+      "antfarm workflow custom list          List custom workflows",
+      "antfarm workflow custom show <id>     Show custom workflow YAML",
+      "antfarm workflow custom create         Create custom workflow (--file <path> or stdin)",
+      "antfarm workflow custom update <id>    Update custom workflow id (--file <path> or stdin)",
+      "antfarm workflow custom delete <id>    Delete custom workflow",
       "",
       "antfarm dashboard [start] [--port N]   Start dashboard daemon (default: 3333)",
       "antfarm dashboard stop                  Stop dashboard daemon",
@@ -77,6 +91,121 @@ function getFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
   if (idx !== -1 && args[idx + 1]) return args[idx + 1];
   return undefined;
+}
+
+async function readWorkflowSpecInput(args: string[]): Promise<WorkflowSpec> {
+  const file = getFlag(args, "--file") ?? getFlag(args, "-f");
+  let raw = "";
+
+  if (file) {
+    raw = await fs.readFile(file, "utf-8");
+  } else if (!process.stdin.isTTY) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+      chunks.push(chunk);
+    }
+    raw = Buffer.concat(chunks).toString("utf-8");
+  } else {
+    throw new Error("Missing workflow spec input. Provide --file <path> or pipe JSON/YAML via stdin.");
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error("Workflow spec input is empty. Provide JSON or YAML.");
+  }
+
+  try {
+    return JSON.parse(trimmed) as WorkflowSpec;
+  } catch {
+    // fall through to YAML parser
+  }
+
+  try {
+    const parsed = (await import("yaml")).default.parse(trimmed);
+    return parsed as WorkflowSpec;
+  } catch (err) {
+    throw new Error(`Failed to parse workflow spec. Provide valid JSON or YAML. ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function handleWorkflowCustom(args: string[]) {
+  const [action, target] = args;
+
+  if (!action || action === "list") {
+    const ids = await listCustomWorkflows();
+    if (ids.length === 0) {
+      console.log("No custom workflows found.");
+      return;
+    }
+    console.log("Custom workflows:");
+    for (const id of ids) console.log(`  ${id}`);
+    return;
+  }
+
+  if (action === "show") {
+    if (!target) {
+      throw new Error("Missing workflow id. Usage: antfarm workflow custom show <id>");
+    }
+    const spec = await getCustomWorkflow(target);
+    if (!spec) {
+      throw new Error(`Custom workflow not found: ${target}`);
+    }
+    const yaml = (await import("yaml")).default.stringify(spec);
+    process.stdout.write(yaml.endsWith("\n") ? yaml : `${yaml}\n`);
+    return;
+  }
+
+  if (action === "delete") {
+    if (!target) {
+      throw new Error("Missing workflow id. Usage: antfarm workflow custom delete <id>");
+    }
+    const deleted = await deleteCustomWorkflow(target);
+    if (!deleted) {
+      throw new Error(`Custom workflow not found: ${target}`);
+    }
+    console.log(`Deleted custom workflow: ${target}`);
+    return;
+  }
+
+  if (action === "create") {
+    const spec = await readWorkflowSpecInput(args.slice(1));
+    const validation = validateWorkflowSpec(spec);
+    if (!validation.valid) {
+      throw new Error(`Invalid workflow spec: ${validation.errors.join("; ")}`);
+    }
+    const result = await saveCustomWorkflow(spec);
+    if (!result.valid) {
+      throw new Error(`Invalid workflow spec: ${result.errors.join("; ")}`);
+    }
+    console.log(`Created custom workflow: ${spec.id}`);
+    return;
+  }
+
+  if (action === "update") {
+    if (!target) {
+      throw new Error("Missing workflow id. Usage: antfarm workflow custom update <id> (--file <path> | stdin)");
+    }
+    const existing = await getCustomWorkflow(target);
+    if (!existing) {
+      throw new Error(`Custom workflow not found: ${target}`);
+    }
+    const spec = await readWorkflowSpecInput(args.slice(2));
+    spec.id = target;
+    const validation = validateWorkflowSpec(spec);
+    if (!validation.valid) {
+      throw new Error(`Invalid workflow spec: ${validation.errors.join("; ")}`);
+    }
+    const result = await saveCustomWorkflow(spec);
+    if (!result.valid) {
+      throw new Error(`Invalid workflow spec: ${result.errors.join("; ")}`);
+    }
+    console.log(`Updated custom workflow: ${target}`);
+    return;
+  }
+
+  throw new Error(
+    `Unknown workflow custom action: ${action}. Use one of: list, show, create, update, delete.`,
+  );
 }
 
 async function handleBacklog(args: string[]) {
@@ -383,6 +512,16 @@ async function main() {
     if (workflows.length === 0) { process.stdout.write("No workflows available.\n"); } else {
       process.stdout.write("Available workflows:\n");
       for (const w of workflows) process.stdout.write(`  ${w}\n`);
+    }
+    return;
+  }
+
+  if (action === "custom") {
+    try {
+      await handleWorkflowCustom(args.slice(2));
+    } catch (err) {
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
     }
     return;
   }
