@@ -91,3 +91,13 @@ Started: 2026-02-11T03:07:00
 - Files changed: src/installer/paths.ts, src/workflow-builder.ts, src/installer/workflow-discovery.ts, src/installer/workflow-fetch.ts, tests/workflow-discovery.test.ts
 - **Learnings:** Use discovery primitives as the single source of truth, then keep legacy APIs as thin adapters to preserve backwards compatibility while enabling new features.
 ---
+
+## 2026-02-11 15:44 - US-001 (retry verification): Validate required checks
+- Verified branch already contains US-001 implementation (`815550d`) with custom path helpers and bundled+custom workflow discovery primitives.
+- Re-ran required checks:
+  - Typecheck: `npx tsc -p tsconfig.json --noEmit` ✅
+  - Build: `npm run build` ✅
+  - Test command: `node --test tests/*.test.js` ✅ (26/26 passing in this workspace)
+- No additional source changes were required for US-001 behavior.
+- **Learnings:** When verifier retries are triggered by workspace-local artifacts, first confirm story commit integrity and then rerun the exact required command set.
+---
