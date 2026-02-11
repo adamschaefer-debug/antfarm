@@ -171,3 +171,29 @@ Started: 2026-02-11T03:07:00
 - Files changed: `src/server/dashboard.ts`, `tests/workflow-builder-api.test.js`
 - **Learnings:** Keeping API errors in a consistent `{ code, message, details }` shape makes frontend handling predictable and allows validation details to flow without brittle string matching.
 ---
+
+## 2026-02-11 16:40 - US-006: Build dashboard workflow-builder UI
+- Added a dedicated workflow-builder panel in `src/server/index.html`, reachable from a new `Workflow Builder` header button.
+- Implemented workflow builder form state and dynamic repeaters for agents and steps with add/remove controls:
+  - `addBuilderAgent/removeBuilderAgent`
+  - `addBuilderStep/removeBuilderStep`
+  - state-to-spec projection via `buildWorkflowSpecFromState()`
+- Added Validate and Save actions wired to dashboard APIs:
+  - Validate: `POST /api/custom-workflows/validate`
+  - Save: `POST /api/custom-workflows` (overwrite enabled)
+- Implemented inline validation UX:
+  - error panel (`wb-errors`) with server-provided validation messages
+  - field highlighting via `.error` class for invalid inputs
+  - success messaging (`wb-success`) for validate/save feedback
+- Save flow now reloads custom workflow data and refreshes dashboard workflow selector by re-running `loadWorkflows()`.
+- Added tests in `tests/workflow-builder-dashboard.test.js` covering:
+  - workflow builder UI entry + metadata controls
+  - add/remove controls for agents and steps
+  - validate action + inline server error surfacing
+  - save action + workflow selector refresh behavior
+- Re-ran required checks:
+  - Typecheck: `npx tsc -p tsconfig.json --noEmit` ✅
+  - Build: `npm run build` ✅
+  - Tests: `node --test tests/*.test.js` ✅ (49/49 passing)
+- **Learnings:** For server-rendered dashboard JS, file-level structure tests are a fast, reliable safety net for UI workflows without introducing browser test harness overhead.
+---

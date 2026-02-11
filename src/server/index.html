@@ -97,17 +97,58 @@ select:focus{outline:none;border-color:#8ECFC0}
 .bl-btn-dispatch:hover{background:#2d8a77}
 .bl-btn-dispatch:disabled{opacity:.5;cursor:not-allowed}
 .bl-run-link{display:inline-block;margin-top:8px;font-size:12px;color:#3a9e8a;text-decoration:underline;cursor:pointer}
+.header-actions{display:flex;align-items:center;gap:8px}
+.header-btn{background:#5a6b32;color:#fff;border:1px solid #4a5a28;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer}
+.header-btn:hover{background:#4f602b}
+.builder-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(58,50,38,.5);z-index:110;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .15s}
+.builder-overlay.open{opacity:1;pointer-events:auto}
+.builder-panel{background:#fff;border:1px solid #D4C4A0;border-radius:12px;width:92%;max-width:900px;max-height:90vh;overflow-y:auto;padding:20px 20px 24px;position:relative;box-shadow:0 8px 32px rgba(58,50,38,.2)}
+.builder-title{font-size:18px;font-weight:700;color:#3A3226;margin-bottom:12px;padding-right:40px}
+.builder-subtitle{font-size:12px;color:#8b8072;margin-bottom:16px}
+.builder-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.builder-section{border:1px solid #eee;border-radius:8px;padding:12px;background:#fff}
+.builder-section h3{font-size:13px;font-weight:700;color:#6B7F3B;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px}
+.builder-field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.builder-field label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:#6B7F3B}
+.builder-field input,.builder-field textarea,.builder-field select{font-family:inherit;font-size:13px;padding:8px 10px;border:1px solid #D4C4A0;border-radius:6px;background:#FAF8F5;color:#3A3226;resize:vertical}
+.builder-field textarea{min-height:70px}
+.builder-field input.error,.builder-field textarea.error,.builder-field select.error{border-color:#E8845C;background:#fff7f4}
+.builder-repeat-list{display:flex;flex-direction:column;gap:8px}
+.builder-item{border:1px solid #D4C4A0;border-radius:6px;padding:10px;background:#FAF8F5}
+.builder-item-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.builder-item-title{font-size:12px;font-weight:600;color:#3A3226}
+.builder-remove-btn{background:#E8845C;color:#fff;border:none;border-radius:4px;padding:4px 8px;font-size:11px;font-weight:600;cursor:pointer}
+.builder-remove-btn:hover{background:#d4603a}
+.builder-add-btn{background:#8ECFC0;color:#234f46;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer}
+.builder-add-btn:hover{background:#79bdb0}
+.builder-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.builder-save-btn,.builder-validate-btn{border:none;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer}
+.builder-validate-btn{background:#3a9e8a;color:#fff}
+.builder-save-btn{background:#6B7F3B;color:#fff}
+.builder-error-box{margin-top:12px;border:1px solid #E8845C;background:#fff4ef;border-radius:6px;padding:10px;display:none}
+.builder-error-box.visible{display:block}
+.builder-error-title{font-size:12px;font-weight:700;color:#d4603a;margin-bottom:6px}
+.builder-error-list{font-size:12px;color:#8d3f26;line-height:1.5;padding-left:18px}
+.builder-success{margin-top:10px;font-size:12px;color:#2d8a77;display:none}
+.builder-success.visible{display:block}
+@media(max-width:900px){.builder-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header>
   <h1><span>antfarm</span> dashboard</h1>
   <select id="wf-select"><option value="">Loading...</option></select>
+  <div class="header-actions">
+    <button class="header-btn" id="open-builder-btn" onclick="openWorkflowBuilder()">Workflow Builder</button>
+  </div>
   <span class="refresh-note" id="refresh-note">Auto-refresh: 30s</span>
 </header>
 <div class="board" id="board"><div class="empty" style="margin:auto">Loading...</div></div>
 <div class="overlay" id="overlay" onclick="if(event.target===this)closePanel()">
   <div class="panel" id="panel"></div>
+</div>
+<div class="builder-overlay" id="builder-overlay" onclick="if(event.target===this)closeWorkflowBuilder()">
+  <div class="builder-panel" id="builder-panel"></div>
 </div>
 
 <script>
@@ -115,6 +156,8 @@ const API = '';
 let workflows = [];
 let currentWf = null;
 let backlogItems = [];
+let customWorkflows = [];
+let builderState = createEmptyBuilderState();
 
 async function fetchJSON(url) {
   const r = await fetch(API + url);
@@ -123,6 +166,234 @@ async function fetchJSON(url) {
 
 async function loadBacklog() {
   try { backlogItems = await fetchJSON('/api/backlog'); } catch { backlogItems = []; }
+}
+
+function createEmptyBuilderState() {
+  return { id: '', name: '', agents: [{ id: '', workspaceBaseDir: '' }], steps: [{ id: '', agent: '', input: '', expects: '' }] };
+}
+
+async function loadCustomWorkflows() {
+  try { customWorkflows = await fetchJSON('/api/custom-workflows'); } catch { customWorkflows = []; }
+}
+
+function addBuilderAgent() { builderState.agents.push({ id: '', workspaceBaseDir: '' }); renderWorkflowBuilder(); }
+function removeBuilderAgent(index) { builderState.agents.splice(index, 1); if (builderState.agents.length === 0) builderState.agents.push({ id: '', workspaceBaseDir: '' }); renderWorkflowBuilder(); }
+function addBuilderStep() { builderState.steps.push({ id: '', agent: '', input: '', expects: '' }); renderWorkflowBuilder(); }
+function removeBuilderStep(index) { builderState.steps.splice(index, 1); if (builderState.steps.length === 0) builderState.steps.push({ id: '', agent: '', input: '', expects: '' }); renderWorkflowBuilder(); }
+
+function normalizeBuilderStateFromForm() {
+  const byId = (id) => document.getElementById(id);
+  builderState.id = (byId('wb-id')?.value || '').trim();
+  builderState.name = (byId('wb-name')?.value || '').trim();
+  builderState.agents = builderState.agents.map((_, idx) => ({ id: (byId(`wb-agent-id-${idx}`)?.value || '').trim(), workspaceBaseDir: (byId(`wb-agent-dir-${idx}`)?.value || '').trim() }));
+  builderState.steps = builderState.steps.map((_, idx) => ({ id: (byId(`wb-step-id-${idx}`)?.value || '').trim(), agent: (byId(`wb-step-agent-${idx}`)?.value || '').trim(), input: (byId(`wb-step-input-${idx}`)?.value || '').trim(), expects: (byId(`wb-step-expects-${idx}`)?.value || '').trim() }));
+}
+
+function buildWorkflowSpecFromState() {
+  normalizeBuilderStateFromForm();
+  return {
+    id: builderState.id,
+    name: builderState.name,
+    agents: builderState.agents.filter(a => a.id || a.workspaceBaseDir).map(a => ({ id: a.id, workspace: { baseDir: a.workspaceBaseDir, files: {} } })),
+    steps: builderState.steps.filter(s => s.id || s.agent || s.input || s.expects).map(s => ({ id: s.id, agent: s.agent, input: s.input, expects: s.expects })),
+  };
+}
+
+function setBuilderErrors(errors) {
+  const box = document.getElementById('wb-errors');
+  const list = document.getElementById('wb-errors-list');
+  if (!box || !list) return;
+  if (!errors || errors.length === 0) { box.classList.remove('visible'); list.innerHTML = ''; return; }
+  list.innerHTML = errors.map(err => `<li>${esc(String(err))}</li>`).join('');
+  box.classList.add('visible');
+}
+
+function setBuilderSuccess(message) {
+  const el = document.getElementById('wb-success');
+  if (!el) return;
+  if (!message) { el.classList.remove('visible'); el.textContent = ''; return; }
+  el.textContent = message;
+  el.classList.add('visible');
+}
+
+function highlightBuilderFields(errors) {
+  const all = document.querySelectorAll('#builder-panel input, #builder-panel textarea, #builder-panel select');
+  all.forEach(el => el.classList.remove('error'));
+  if (!errors || errors.length === 0) return;
+  const joined = errors.join('\n');
+  if (joined.includes('id')) document.getElementById('wb-id')?.classList.add('error');
+  if (joined.includes('name')) document.getElementById('wb-name')?.classList.add('error');
+  if (joined.includes('agent')) document.querySelector('[id^="wb-agent-id-"]')?.classList.add('error');
+  if (joined.includes('step')) document.querySelector('[id^="wb-step-id-"]')?.classList.add('error');
+}
+
+function renderWorkflowBuilder() {
+  const panel = document.getElementById('builder-panel');
+  if (!panel) return;
+  const agentItems = builderState.agents.map((agent, idx) => `
+    <div class="builder-item">
+      <div class="builder-item-head">
+        <div class="builder-item-title">Agent ${idx + 1}</div>
+        <button class="builder-remove-btn" onclick="removeBuilderAgent(${idx})">Remove</button>
+      </div>
+      <div class="builder-field">
+        <label>Agent ID</label>
+        <input id="wb-agent-id-${idx}" value="${esc(agent.id)}" placeholder="developer" />
+      </div>
+      <div class="builder-field">
+        <label>Workspace baseDir</label>
+        <input id="wb-agent-dir-${idx}" value="${esc(agent.workspaceBaseDir)}" placeholder="/path/to/workspace" />
+      </div>
+    </div>
+  `).join('');
+  const stepItems = builderState.steps.map((step, idx) => `
+    <div class="builder-item">
+      <div class="builder-item-head">
+        <div class="builder-item-title">Step ${idx + 1}</div>
+        <button class="builder-remove-btn" onclick="removeBuilderStep(${idx})">Remove</button>
+      </div>
+      <div class="builder-field">
+        <label>Step ID</label>
+        <input id="wb-step-id-${idx}" value="${esc(step.id)}" placeholder="s1" />
+      </div>
+      <div class="builder-field">
+        <label>Agent</label>
+        <input id="wb-step-agent-${idx}" value="${esc(step.agent)}" placeholder="developer" />
+      </div>
+      <div class="builder-field">
+        <label>Input</label>
+        <textarea id="wb-step-input-${idx}" placeholder="Instruction for the step">${esc(step.input)}</textarea>
+      </div>
+      <div class="builder-field">
+        <label>Expects</label>
+        <textarea id="wb-step-expects-${idx}" placeholder="Expected output format">${esc(step.expects)}</textarea>
+      </div>
+    </div>
+  `).join('');
+  const existing = customWorkflows.map(w => `<option value="${esc(w.id)}">${esc(w.name || w.id)}</option>`).join('');
+  panel.innerHTML = `
+    <button class="panel-close" onclick="closeWorkflowBuilder()">✕</button>
+    <div class="builder-title">Workflow Builder</div>
+    <div class="builder-subtitle">Compose workflow metadata, agents, and steps. Validate before save to catch schema issues.</div>
+    <div class="builder-field">
+      <label>Existing Custom Workflows</label>
+      <select id="wb-existing" onchange="loadExistingCustomWorkflow(this.value)">
+        <option value="">— new workflow —</option>
+        ${existing}
+      </select>
+    </div>
+    <div class="builder-grid">
+      <div class="builder-section">
+        <h3>Workflow Metadata</h3>
+        <div class="builder-field">
+          <label>Workflow ID</label>
+          <input id="wb-id" value="${esc(builderState.id)}" placeholder="workflow-id" />
+        </div>
+        <div class="builder-field">
+          <label>Name</label>
+          <input id="wb-name" value="${esc(builderState.name)}" placeholder="Workflow Name" />
+        </div>
+      </div>
+      <div class="builder-section">
+        <h3>Agents</h3>
+        <div class="builder-repeat-list">${agentItems}</div>
+        <button class="builder-add-btn" onclick="addBuilderAgent()">+ Add Agent</button>
+      </div>
+    </div>
+    <div class="builder-section" style="margin-top:16px">
+      <h3>Steps</h3>
+      <div class="builder-repeat-list">${stepItems}</div>
+      <button class="builder-add-btn" onclick="addBuilderStep()">+ Add Step</button>
+    </div>
+    <div class="builder-actions">
+      <button class="builder-validate-btn" onclick="validateWorkflowBuilderSpec()">Validate</button>
+      <button class="builder-save-btn" onclick="saveWorkflowBuilderSpec()">Save</button>
+    </div>
+    <div class="builder-error-box" id="wb-errors">
+      <div class="builder-error-title">Validation errors</div>
+      <ul class="builder-error-list" id="wb-errors-list"></ul>
+    </div>
+    <div class="builder-success" id="wb-success"></div>
+  `;
+}
+
+async function loadExistingCustomWorkflow(id) {
+  if (!id) { builderState = createEmptyBuilderState(); renderWorkflowBuilder(); setBuilderErrors([]); setBuilderSuccess(''); return; }
+  try {
+    const data = await fetchJSON(`/api/custom-workflows/${id}`);
+    builderState = {
+      id: data.workflow?.id || id,
+      name: data.workflow?.name || '',
+      agents: (data.workflow?.agents || []).map(a => ({ id: a.id || '', workspaceBaseDir: a.workspace?.baseDir || '' })),
+      steps: (data.workflow?.steps || []).map(s => ({ id: s.id || '', agent: s.agent || '', input: s.input || '', expects: s.expects || '' })),
+    };
+    if (builderState.agents.length === 0) builderState.agents = [{ id: '', workspaceBaseDir: '' }];
+    if (builderState.steps.length === 0) builderState.steps = [{ id: '', agent: '', input: '', expects: '' }];
+    renderWorkflowBuilder();
+    document.getElementById('wb-existing').value = id;
+    setBuilderErrors([]);
+    setBuilderSuccess('Loaded existing workflow.');
+  } catch {
+    setBuilderErrors(['Could not load selected workflow']);
+  }
+}
+
+async function validateWorkflowBuilderSpec() {
+  setBuilderSuccess('');
+  const spec = buildWorkflowSpecFromState();
+  try {
+    const r = await fetch(API + '/api/custom-workflows/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec }) });
+    const payload = await r.json();
+    if (!r.ok) {
+      const errs = payload?.error?.details?.errors || [payload?.error?.message || 'Validation failed'];
+      setBuilderErrors(errs);
+      highlightBuilderFields(errs);
+      return false;
+    }
+    setBuilderErrors([]);
+    highlightBuilderFields([]);
+    setBuilderSuccess('Validation passed.');
+    return true;
+  } catch {
+    setBuilderErrors(['Validation request failed']);
+    return false;
+  }
+}
+
+async function saveWorkflowBuilderSpec() {
+  setBuilderSuccess('');
+  const spec = buildWorkflowSpecFromState();
+  try {
+    const r = await fetch(API + '/api/custom-workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec, overwrite: true }) });
+    const payload = await r.json();
+    if (!r.ok) {
+      const errs = payload?.error?.details?.errors || [payload?.error?.message || 'Save failed'];
+      setBuilderErrors(errs);
+      highlightBuilderFields(errs);
+      return;
+    }
+    setBuilderErrors([]);
+    highlightBuilderFields([]);
+    setBuilderSuccess(`Saved workflow "${payload.id}".`);
+    await loadCustomWorkflows();
+    await loadWorkflows();
+    renderWorkflowBuilder();
+    document.getElementById('wb-existing').value = payload.id;
+  } catch {
+    setBuilderErrors(['Save request failed']);
+  }
+}
+
+async function openWorkflowBuilder() {
+  await loadCustomWorkflows();
+  renderWorkflowBuilder();
+  setBuilderErrors([]);
+  setBuilderSuccess('');
+  document.getElementById('builder-overlay').classList.add('open');
+}
+
+function closeWorkflowBuilder() {
+  document.getElementById('builder-overlay').classList.remove('open');
 }
 
 function renderBacklogColumn() {
@@ -394,7 +665,7 @@ async function openRun(id) {
 function closePanel() {
   document.getElementById('overlay').classList.remove('open');
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closePanel(); closeWorkflowBuilder(); } });
 
 async function loadStories(runId) {
   const stories = await fetchJSON(`/api/runs/${runId}/stories`);
