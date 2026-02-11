@@ -7,16 +7,21 @@ export async function loadWorkflowSpec(workflowDir: string): Promise<WorkflowSpe
   const filePath = path.join(workflowDir, "workflow.yml");
   const raw = await fs.readFile(filePath, "utf-8");
   const parsed = YAML.parse(raw) as WorkflowSpec;
+  validateWorkflowSpecDocument(parsed, workflowDir);
+  return parsed;
+}
+
+export function validateWorkflowSpecDocument(parsed: WorkflowSpec, source: string): void {
   if (!parsed?.id) {
-    throw new Error(`workflow.yml missing id in ${workflowDir}`);
+    throw new Error(`workflow.yml missing id in ${source}`);
   }
   if (!Array.isArray(parsed.agents) || parsed.agents.length === 0) {
-    throw new Error(`workflow.yml missing agents list in ${workflowDir}`);
+    throw new Error(`workflow.yml missing agents list in ${source}`);
   }
   if (!Array.isArray(parsed.steps) || parsed.steps.length === 0) {
-    throw new Error(`workflow.yml missing steps list in ${workflowDir}`);
+    throw new Error(`workflow.yml missing steps list in ${source}`);
   }
-  validateAgents(parsed.agents, workflowDir);
+  validateAgents(parsed.agents, source);
   // Parse type/loop from raw YAML before validation
   for (const step of parsed.steps) {
     const rawStep = step as any;
@@ -27,8 +32,7 @@ export async function loadWorkflowSpec(workflowDir: string): Promise<WorkflowSpe
       step.loop = parseLoopConfig(rawStep.loop);
     }
   }
-  validateSteps(parsed.steps, workflowDir);
-  return parsed;
+  validateSteps(parsed.steps, source);
 }
 
 function validateAgents(agents: WorkflowAgent[], workflowDir: string) {

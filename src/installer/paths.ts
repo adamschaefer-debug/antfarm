@@ -38,6 +38,10 @@ export function resolveWorkflowRoot(): string {
   return path.join(resolveAntfarmRoot(), "workflows");
 }
 
+export function resolveCustomWorkflowsDir(): string {
+  return path.join(resolveAntfarmRoot(), "custom-workflows");
+}
+
 export function resolveWorkflowDir(workflowId: string): string {
   return path.join(resolveWorkflowRoot(), workflowId);
 }
