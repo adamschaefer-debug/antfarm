@@ -197,3 +197,18 @@ Started: 2026-02-11T03:07:00
   - Tests: `node --test tests/*.test.js` ✅ (49/49 passing)
 - **Learnings:** For server-rendered dashboard JS, file-level structure tests are a fast, reliable safety net for UI workflows without introducing browser test harness overhead.
 ---
+
+## 2026-02-11 16:47 - US-007: Wire workflow builder output into run board experience
+- Updated dashboard workflow loading to include both bundled and custom workflow specs via shared discovery (`listAvailableWorkflows`) instead of bundled-only directory reads.
+- `/api/workflows` now returns merged workflow options so newly saved custom workflows show in the selector immediately without daemon restart.
+- Backlog dispatch now validates using `resolveWorkflowReference()` against merged bundled+custom workflows.
+- Backlog dispatch now auto-installs custom workflows before starting runs, matching CLI `workflow run` behavior and enabling end-to-end custom dispatch.
+- Added integration coverage in `tests/workflow-builder-api.test.js` for:
+  - custom workflows appearing in `/api/workflows`
+  - dispatching backlog items to custom workflows and verifying `/api/runs?workflow=<custom-id>` returns run + step data
+- Re-ran required checks:
+  - Typecheck: `npx tsc -p tsconfig.json --noEmit` ✅
+  - Build: `npm run build` ✅
+  - Tests: `node --test tests/*.test.js` ✅ (51/51 passing)
+- **Learnings:** Dashboard execution paths should reuse the same workflow resolution/install primitives as CLI paths to prevent source-of-truth drift between UI and command flows.
+---

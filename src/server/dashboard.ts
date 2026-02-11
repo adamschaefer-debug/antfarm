@@ -4,8 +4,10 @@ import fsPromises from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDb } from "../db.js";
-import { resolveBundledWorkflowsDir, resolveCustomWorkflowPath } from "../installer/paths.js";
+import { resolveCustomWorkflowPath } from "../installer/paths.js";
 import { runWorkflow } from "../installer/run.js";
+import { installWorkflow } from "../installer/install.js";
+import { listAvailableWorkflows, resolveWorkflowReference } from "../installer/workflow-fetch.js";
 import { getItems, createItem, updateItem, deleteItem, reorderItem } from "../backlog.js";
 import {
   deleteCustomWorkflow,
@@ -35,24 +37,30 @@ interface ApiErrorBody {
   };
 }
 
-function loadWorkflows(): WorkflowDef[] {
-  const dir = resolveBundledWorkflowsDir();
+async function loadWorkflows(): Promise<WorkflowDef[]> {
+  const discovered = await listAvailableWorkflows();
   const results: WorkflowDef[] = [];
-  try {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const ymlPath = path.join(dir, entry.name, "workflow.yml");
-      if (!fs.existsSync(ymlPath)) continue;
-      const parsed = YAML.parse(fs.readFileSync(ymlPath, "utf-8"));
+  const seenIds = new Set<string>();
+
+  for (const workflow of discovered) {
+    try {
+      const parsed = YAML.parse(await fsPromises.readFile(workflow.specPath, "utf-8"));
+      const id = parsed.id ?? workflow.id;
+      // Prefer first discovered source when ids collide (bundled before custom).
+      if (seenIds.has(id)) {
+        continue;
+      }
+      seenIds.add(id);
       results.push({
-        id: parsed.id ?? entry.name,
-        name: parsed.name ?? entry.name,
+        id,
+        name: parsed.name ?? id,
         steps: (parsed.steps ?? []).map((s: any) => ({ id: s.id, agent: s.agent })),
       });
+    } catch {
+      // Skip unreadable/invalid specs so one bad file doesn't break dashboard APIs.
     }
-  } catch {
-    /* empty */
   }
+
   return results;
 }
 
@@ -302,10 +310,17 @@ export function startDashboard(port = 3333): http.Server {
           return json(res, { error: "target_workflow is not set" }, 400);
         }
         // Validate workflow exists
-        const workflows = loadWorkflows();
-        if (!workflows.find((w) => w.id === item.target_workflow)) {
+        let resolved;
+        try {
+          resolved = await resolveWorkflowReference(item.target_workflow);
+        } catch {
           return json(res, { error: "invalid workflow: " + item.target_workflow }, 400);
         }
+
+        if (resolved.source === "custom") {
+          await installWorkflow({ workflowId: item.target_workflow });
+        }
+
         const run = await runWorkflow({ workflowId: item.target_workflow, taskTitle: item.title });
         updateItem(item.id, { status: "dispatched" });
         return json(res, { ok: true, run_id: run.id, status: "dispatched" });
@@ -319,7 +334,7 @@ export function startDashboard(port = 3333): http.Server {
     }
 
     if (p === "/api/workflows") {
-      return json(res, loadWorkflows());
+      return json(res, await loadWorkflows());
     }
 
     const storiesMatch = p.match(/^\/api\/runs\/([^/]+)\/stories$/);

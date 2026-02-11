@@ -5,10 +5,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { startDashboard } from "../dist/server/dashboard.js";
+import { getDb } from "../dist/db.js";
 
 const PORT = 9881;
 let server;
 let tmpDir = "";
+let bootstrapFile = "";
 
 function makeValidSpec(id = "builder-flow") {
   return {
@@ -18,8 +20,8 @@ function makeValidSpec(id = "builder-flow") {
       {
         id: "developer",
         workspace: {
-          baseDir: "/tmp/project",
-          files: { "README.md": "demo" },
+          baseDir: "app",
+          files: { "README.md": bootstrapFile },
         },
       },
     ],
@@ -67,19 +69,30 @@ function req(method, reqPath, body, rawBody) {
 
 before(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "antfarm-workflow-api-"));
+  bootstrapFile = path.join(tmpDir, "bootstrap.txt");
+  await fs.writeFile(bootstrapFile, "hello", "utf-8");
+  await fs.writeFile(path.join(tmpDir, "openclaw.json"), JSON.stringify({ agents: { list: [] } }, null, 2), "utf-8");
   process.env.OPENCLAW_STATE_DIR = tmpDir;
+  process.env.OPENCLAW_CONFIG_PATH = path.join(tmpDir, "openclaw.json");
   server = startDashboard(PORT);
 });
 
 after(async () => {
   server.close();
   delete process.env.OPENCLAW_STATE_DIR;
+  delete process.env.OPENCLAW_CONFIG_PATH;
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
   const customDir = path.join(tmpDir, "antfarm", "custom-workflows");
   await fs.rm(customDir, { recursive: true, force: true });
+
+  const db = getDb();
+  db.exec("DELETE FROM steps");
+  db.exec("DELETE FROM stories");
+  db.exec("DELETE FROM runs");
+  db.exec("DELETE FROM backlog_items");
 });
 
 afterEach(async () => {
@@ -178,5 +191,36 @@ describe("workflow builder dashboard API", () => {
     const missing = await req("GET", "/api/custom-workflows/delete-me");
     assert.equal(missing.status, 404);
     assert.equal(missing.data.error.code, "workflow_not_found");
+  });
+
+  it("includes newly created custom workflows in /api/workflows", async () => {
+    await req("POST", "/api/custom-workflows", makeValidSpec("board-flow"));
+
+    const workflows = await req("GET", "/api/workflows");
+    assert.equal(workflows.status, 200);
+    assert.ok(workflows.data.some((w) => w.id === "board-flow"));
+  });
+
+  it("dispatches backlog items for custom workflows and exposes runs by workflow filter", async () => {
+    await req("POST", "/api/custom-workflows", makeValidSpec("dispatch-flow"));
+
+    const backlog = await req("POST", "/api/backlog", {
+      title: "Dispatch custom workflow",
+      target_workflow: "dispatch-flow",
+    });
+    assert.equal(backlog.status, 201);
+
+    const dispatched = await req("POST", `/api/backlog/${backlog.data.id}/dispatch`);
+    assert.equal(dispatched.status, 200);
+    assert.equal(dispatched.data.ok, true);
+    assert.equal(dispatched.data.status, "dispatched");
+
+    const filteredRuns = await req("GET", "/api/runs?workflow=dispatch-flow");
+    assert.equal(filteredRuns.status, 200);
+    assert.ok(Array.isArray(filteredRuns.data));
+    assert.equal(filteredRuns.data.length, 1);
+    assert.equal(filteredRuns.data[0].workflow_id, "dispatch-flow");
+    assert.ok(Array.isArray(filteredRuns.data[0].steps));
+    assert.equal(filteredRuns.data[0].steps[0].step_id, "s1");
   });
 });
